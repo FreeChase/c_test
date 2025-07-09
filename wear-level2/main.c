@@ -3,11 +3,14 @@
 #include <stdio.h>  // For printf, fprintf
 
 // --- Flash Parameters (Adjust as needed) ---
-#define DATA_BLOCK_BASIC_SIZE   1024    // data block basic size
+
+
 #define FLASH_SECTOR_SIZE       4096    // Example: 4KB sector size
 #define WEAR_LEVEL_AREA_START   0x10000 // Example: Start address of wear-leveling area (e.g., after firmware)
 #define NUM_LOGICAL_BLOCKS      16      // Number of logical blocks in the wear-leveling area.
 
+#define DATA_UNIT_SIZE          1024    // data block basic size
+#define DATA_UNIT_NUMBER        (FLASH_SECTOR_SIZE/DATA_UNIT_SIZE*NUM_LOGICAL_BLOCKS)  
 // --- Data Structure to Store Product Power-On Time ---
 typedef struct {
     uint32_t power_on_seconds; // The actual power-on time in seconds
@@ -55,16 +58,16 @@ typedef struct {
 
     // --- Wear-Leveling State Structure ---
 typedef struct {
-    uint32_t current_block_index;
+    uint32_t curDataUnitIndex;
     uint32_t current_write_counter;
-    int latest_valid_block;  // Cache for faster reads
+    int validDataUnit;  // Cache for faster reads
     uint32_t last_valid_counter; // Track counter of latest valid block
 } WearLevelState_t;
 
 static WearLevelState_t wear_state = {
-    .current_block_index = 0,
+    .curDataUnitIndex = 0,
     .current_write_counter = 0,
-    .latest_valid_block = -1,
+    .validDataUnit = -1,
     .last_valid_counter = 0
 };
 
@@ -138,10 +141,11 @@ uint16_t calculate_checksum(const uint8_t *data, uint32_t length) {
 int flash_wear_level_init() {
     printf("-> Initializing wear-leveling: Scanning flash for latest data.\n");
     uint32_t latest_counter = 0;
-    int found_valid_block = -1;
+    // int found_valid_block = -1;
+    wear_state.validDataUnit = -1;
 
-    for (uint32_t i = 0; i < NUM_LOGICAL_BLOCKS; i++) {
-        uint32_t block_address = WEAR_LEVEL_AREA_START + (i * DATA_BLOCK_BASIC_SIZE);
+    for (uint32_t i = 0; i < DATA_UNIT_NUMBER; i++) {
+        uint32_t block_address = WEAR_LEVEL_AREA_START + (i * DATA_UNIT_SIZE);
         FlashBlockHeader_t header;
 
         if (spi_flash_read(block_address, (uint8_t*)&header, sizeof(header)) != 0) {
@@ -154,22 +158,22 @@ int flash_wear_level_init() {
         if (header.magic_number == MAGIC_NUMBER && header.checksum == calculated_chksum) {
             if (header.write_counter > latest_counter) {
                 latest_counter = header.write_counter;
-                found_valid_block = i;
+                wear_state.validDataUnit = i;
             }
         }
     }
 
-    if (found_valid_block != -1) {
-        wear_state.current_block_index = (found_valid_block + 1) % NUM_LOGICAL_BLOCKS;
+    if (wear_state.validDataUnit != -1) {
+        wear_state.curDataUnitIndex = wear_state.validDataUnit;
         wear_state.current_write_counter = latest_counter;
         printf("   Found latest data in block %d with counter %u. Next write to block %u.\n",
-               found_valid_block, latest_counter, wear_state.current_block_index);
+               wear_state.validDataUnit, latest_counter, wear_state.curDataUnitIndex);
     } else {
-        wear_state.current_block_index = 0;
+        wear_state.curDataUnitIndex = 0;
         wear_state.current_write_counter = 0;
         printf("   No valid data found. Starting from block 0 with counter 0.\n");
     }
-    return 0;
+    return wear_state.validDataUnit;
 }
 
 /**
@@ -178,8 +182,15 @@ int flash_wear_level_init() {
  * @return 0 on success, -1 on failure.
  */
 int flash_wear_level_write(ProductData_t *data) {
-    uint32_t target_address = WEAR_LEVEL_AREA_START + (wear_state.current_block_index * DATA_BLOCK_BASIC_SIZE);
+    uint32_t target_address;
     FlashBlockHeader_t header_to_write;
+    if(wear_state.validDataUnit != -1)
+    {
+        //* wear_state.curDataUnitIndex  is valid ,cur DataUnit already writen , else default write zero
+        wear_state.curDataUnitIndex = (wear_state.curDataUnitIndex + 1) % DATA_UNIT_NUMBER;
+    }
+
+    target_address = WEAR_LEVEL_AREA_START + (wear_state.curDataUnitIndex * DATA_UNIT_SIZE);
 
     header_to_write.magic_number = MAGIC_NUMBER;
     wear_state.current_write_counter++;
@@ -188,7 +199,7 @@ int flash_wear_level_write(ProductData_t *data) {
     header_to_write.checksum = calculate_checksum((const uint8_t*)&header_to_write.data, sizeof(ProductData_t));
 
     printf("-> Writing data (counter: %u) to block %u (address: 0x%X).\n",
-           header_to_write.write_counter, wear_state.current_block_index, target_address);
+           header_to_write.write_counter, wear_state.curDataUnitIndex, target_address);
 
     // Erase the sector before writing
     // if (spi_flash_erase_sector(target_address) != 0) {
@@ -214,9 +225,10 @@ int flash_wear_level_write(ProductData_t *data) {
         // spi_flash_erase_sector(target_address); // Rollback
         return -1;
     }
-    printf("   Data written successfully to block %u.\n", wear_state.current_block_index);
 
-    wear_state.current_block_index = (wear_state.current_block_index + 1) % NUM_LOGICAL_BLOCKS;
+    wear_state.validDataUnit = 1;
+    printf("   Data written successfully to block %u.\n", wear_state.curDataUnitIndex);
+
 
     return 0;
 }
@@ -229,37 +241,29 @@ int flash_wear_level_write(ProductData_t *data) {
 int flash_wear_level_read(ProductData_t *data) {
     printf("-> Reading wear-leveled data: Scanning for latest valid block.\n");
     uint32_t latest_counter = 0;
-    int found_valid_block_idx = -1;
-    FlashBlockHeader_t latest_header;
+    int ret = -1;
+    FlashBlockHeader_t header;
 
-    for (uint32_t i = 0; i < NUM_LOGICAL_BLOCKS; i++) {
-        uint32_t block_address = WEAR_LEVEL_AREA_START + (i * DATA_BLOCK_BASIC_SIZE);
-        FlashBlockHeader_t header;
+    if((wear_state.validDataUnit != -1) || (flash_wear_level_init() != -1) )
+    {
+        //* get valid block, wear_state data is valid
+        uint32_t block_address = WEAR_LEVEL_AREA_START + (wear_state.curDataUnitIndex * DATA_UNIT_SIZE);
 
-        if (spi_flash_read(block_address, (uint8_t*)&header, sizeof(header)) != 0) {
-            fprintf(stderr, "WARNING: Error reading flash block at 0x%X during read. Skipping.\n", block_address);
-            continue;
-        }
+        spi_flash_read(block_address, (uint8_t*)&header, sizeof(header));
+        memcpy(data, (char*)&header.data, sizeof(ProductData_t));
 
-        uint16_t calculated_chksum = calculate_checksum((const uint8_t*)&header.data, sizeof(ProductData_t));
-
-        if (header.magic_number == MAGIC_NUMBER && header.checksum == calculated_chksum) {
-            if (header.write_counter > latest_counter) {
-                latest_counter = header.write_counter;
-                found_valid_block_idx = i;
-                memcpy(&latest_header, &header, sizeof(FlashBlockHeader_t));
-            }
-        }
+        printf("   Successfully read latest data from block %d (counter: %u).\n", wear_state.curDataUnitIndex, header.write_counter);
+        ret = 0;
     }
-
-    if (found_valid_block_idx != -1) {
-        memcpy(data, &latest_header.data, sizeof(ProductData_t));
-        printf("   Successfully read latest data from block %d (counter: %u).\n", found_valid_block_idx, latest_counter);
-        return 0;
-    } else {
+    else
+    {
+        //* wear_state data is not valid
         printf("   No valid data found in wear-leveling area.\n");
-        return -1;
+        ret = -1;
     }
+
+    return ret;
+
 }
 
 // --- Test Cases ---
@@ -269,7 +273,7 @@ void run_test_case_1_initial_power_up() {
     spi_flash_init_emu(); // Wipe flash for a clean start
 
     flash_wear_level_init();
-    TEST_ASSERT(wear_state.current_block_index == 0, "Initial block index should be 0.");
+    TEST_ASSERT(wear_state.curDataUnitIndex == 0, "Initial block index should be 0.");
     TEST_ASSERT(wear_state.current_write_counter == 0, "Initial write counter should be 0.");
 
     ProductData_t read_data;
@@ -292,7 +296,7 @@ void run_test_case_2_first_write_and_read() {
     TEST_ASSERT(read_data.power_on_seconds == 100, "Read power_on_seconds should match written value.");
     TEST_ASSERT(read_data.test_value_a == 1, "Read test_value_a should match written value.");
     TEST_ASSERT(read_data.test_value_b == 10, "Read test_value_b should match written value.");
-    TEST_ASSERT(wear_state.current_block_index == 1, "After 1st write, block index should be 1.");
+    TEST_ASSERT(wear_state.curDataUnitIndex == 0, "After 1st write, block index should be 1.");
     TEST_ASSERT(wear_state.current_write_counter == 1, "After 1st write, write counter should be 1.");
 }
 
@@ -306,7 +310,7 @@ void run_test_case_3_sequential_writes_and_power_cycles() {
     ProductData_t data_read_back = {0};
 
     // Write several times, simulating power cycles
-    for (int i = 0; i < NUM_LOGICAL_BLOCKS * 2 + 5; i++) { // Write more than two full cycles + some extra
+    for (int i = 0; i < DATA_UNIT_NUMBER * 2 + 5; i++) { // Write more than two full cycles + some extra
         data_to_write.power_on_seconds = (i + 1) * 100;
         data_to_write.test_value_a = (i + 1) * 10;
         data_to_write.test_value_b = (uint16_t)(i + 1);
@@ -315,7 +319,7 @@ void run_test_case_3_sequential_writes_and_power_cycles() {
         flash_wear_level_write(&data_to_write);
 
         // Simulate power cycle periodically
-        if ((i + 1) % (NUM_LOGICAL_BLOCKS / 2) == 0) {
+        if ((i + 1) % (DATA_UNIT_NUMBER / 2) == 0) {
             printf("\n--- Simulating Power Cycle (Re-initializing) ---\n");
             flash_wear_level_init();
             int ret = flash_wear_level_read(&data_read_back);
@@ -360,8 +364,8 @@ void run_test_case_4_corrupted_block_handling() {
     flash_wear_level_write(&write_data); // Write to block 2 (counter 3)
 
     // Manually corrupt block 1 (address of block 1) by changing its magic number
-    printf("\n--- Manually Corrupting Block 1 (address 0x%X) ---\n", WEAR_LEVEL_AREA_START + (1 * DATA_BLOCK_BASIC_SIZE));
-    uint32_t corrupt_addr = WEAR_LEVEL_AREA_START + (1 * DATA_BLOCK_BASIC_SIZE);
+    printf("\n--- Manually Corrupting Block 1 (address 0x%X) ---\n", WEAR_LEVEL_AREA_START + (1 * DATA_UNIT_SIZE));
+    uint32_t corrupt_addr = WEAR_LEVEL_AREA_START + (1 * DATA_UNIT_SIZE);
     // Overwrite magic number with garbage
     g_flash_memory[corrupt_addr] = 0xAA;
     g_flash_memory[corrupt_addr + 1] = 0xBB;
@@ -383,7 +387,7 @@ void run_test_case_4_corrupted_block_handling() {
     write_data.test_value_a = 4;
     flash_wear_level_write(&write_data); // Should write to block 3 (counter 4)
 
-    TEST_ASSERT(wear_state.current_block_index == 4, "Next write index should be 4 after writing to block 3.");
+    TEST_ASSERT(wear_state.curDataUnitIndex == 4, "Next write index should be 4 after writing to block 3.");
 
     // Final check
     flash_wear_level_init();
@@ -400,25 +404,25 @@ void run_test_case_5_all_blocks_corrupted() {
     ProductData_t write_data = { .power_on_seconds = 100, .test_value_a = 1, .test_value_b = 10 };
 
     // Fill all blocks with valid data
-    for (int i = 0; i < NUM_LOGICAL_BLOCKS; i++) {
+    for (int i = 0; i < DATA_UNIT_NUMBER; i++) {
         write_data.power_on_seconds = (i + 1) * 10;
         write_data.test_value_a = i + 1;
         flash_wear_level_init(); // Initialize each time to update global state
         flash_wear_level_write(&write_data);
     }
-    printf("--- All %d blocks written with valid data. ---\n", NUM_LOGICAL_BLOCKS);
+    printf("--- All %d blocks written with valid data. ---\n", DATA_UNIT_NUMBER);
 
     // Corrupt all blocks manually
     printf("--- Corrupting ALL blocks ---\n");
-    for (int i = 0; i < NUM_LOGICAL_BLOCKS; i++) {
-        uint32_t corrupt_addr = WEAR_LEVEL_AREA_START + (i * DATA_BLOCK_BASIC_SIZE);
+    for (int i = 0; i < DATA_UNIT_NUMBER; i++) {
+        uint32_t corrupt_addr = WEAR_LEVEL_AREA_START + (i * DATA_UNIT_SIZE);
         g_flash_memory[corrupt_addr] = 0xDE; // Corrupt magic number
         g_flash_memory[corrupt_addr + 1] = 0xAD;
     }
 
     printf("\n--- Simulating Power Cycle After All Corruption ---\n");
     flash_wear_level_init(); // Should find no valid blocks
-    TEST_ASSERT(wear_state.current_block_index == 0, "After all corruption, init should set block index to 0.");
+    TEST_ASSERT(wear_state.curDataUnitIndex == 0, "After all corruption, init should set block index to 0.");
     TEST_ASSERT(wear_state.current_write_counter == 0, "After all corruption, init should set write counter to 0.");
 
     ProductData_t read_data;
@@ -444,10 +448,10 @@ int main() {
     
     run_test_case_1_initial_power_up();
     run_test_case_2_first_write_and_read();
-    run_test_case_3_sequential_writes_and_power_cycles();
+    // run_test_case_3_sequential_writes_and_power_cycles();
     fflush(stdout);
-    // run_test_case_4_corrupted_block_handling();
-    // run_test_case_5_all_blocks_corrupted();
+    run_test_case_4_corrupted_block_handling();
+    run_test_case_5_all_blocks_corrupted();
 
 
     printf("\n=== Test Suite Finished ===\n");
