@@ -1,0 +1,1 @@
+circleBufLatest,区别于普通circlebuff，latest版本直接获取最新的数据
