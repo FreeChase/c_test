@@ -8,22 +8,6 @@
 /*********************************************************************
  * CONSTANTS
  */
-#define YMODEM_DATA_SIZE_128 128
-#define YMODEM_DATA_SIZE_1024 1024
-
-#define YMODEM_RX_IDLE 0
-#define YMODEM_RX_ACK 1
-#define YMODEM_RX_EOT 2
-#define YMODEM_RX_ERR 3
-#define YMODEM_RX_EXIT 4
-
-#define YMODEM_TX_IDLE 0
-#define YMODEM_TX_IDLE_ACK 1
-#define YMODEM_TX_DATA 2
-#define YMODEM_TX_DATA_ACK 3
-#define YMODEM_TX_EOT 4
-#define YMODEM_TX_ERR 5
-#define YMODEM_TX_EXIT 6
 /*********************************************************************
  * GLOBAL VARIABLES
  */

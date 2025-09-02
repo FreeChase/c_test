@@ -28,6 +28,24 @@
 #define YMODEM_ERR              1
 #define YMODEM_PAC_EMPTY        2
 
+
+#define YMODEM_DATA_SIZE_128 128
+#define YMODEM_DATA_SIZE_1024 1024
+
+#define YMODEM_RX_IDLE 0
+#define YMODEM_RX_ACK 1
+#define YMODEM_RX_EOT 2
+#define YMODEM_RX_ERR 3
+#define YMODEM_RX_EXIT 4
+
+#define YMODEM_TX_IDLE 0
+#define YMODEM_TX_IDLE_ACK 1
+#define YMODEM_TX_DATA 2
+#define YMODEM_TX_DATA_ACK 3
+#define YMODEM_TX_EOT 4
+#define YMODEM_TX_ERR 5
+#define YMODEM_TX_EXIT 6
+
 /* ASCII control codes: */
 #define SOH (0x01)      /* start of 128-byte data packet */
 #define STX (0x02)      /* start of 1024-byte data packet */
@@ -48,7 +66,7 @@ typedef unsigned short uint16;
 typedef unsigned int uint32;
 typedef unsigned short u16;
 typedef unsigned char u8;
-typedef unsigned int size_t;
+//typedef unsigned int size_t;
 typedef unsigned long unsigned_long;
 
 typedef struct{
@@ -71,6 +89,7 @@ uint8 ymodem_tx_header( char  **fil_nm, size_t *fil_sz );
 uint8 ymodem_tx_finish( uint8 status );
 uint8 ymodem_tx_pac_get( char *buf, size_t offset, size_t size );
 
+void process_ymodem_byte(char current_byte);
 // 底层I/O函数（现在是模拟的）
 void __putchar( char ch );
 void __putbuf( char* buf, size_t len );
