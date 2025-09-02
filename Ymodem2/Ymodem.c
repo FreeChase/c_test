@@ -231,7 +231,7 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
       break;
     default:
       //     __putchar( NAK );      //不正常的状态，调试用
-      goto err; // 这儿暂时认为，包有误，就退出
+      // goto err; // 这儿暂时认为，包有误，就退出
       break;
     }
     break;
