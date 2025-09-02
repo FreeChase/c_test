@@ -253,7 +253,7 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
         pac_size = (u8)(buf[0]) == SOH ? PACKET_SIZE : PACKET_1K_SIZE;
         ymodem_rx_pac_get(buf + PACKET_HEADER, seek, pac_size); // 将接收的包保存
         seek += pac_size;
-        __putchar('C');
+        // __putchar('C');
       break;
       // 指令包
     case EOT:
@@ -278,8 +278,12 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
     case EOT:
       __putchar(ACK);
       ymodem_rx_finish(YMODEM_OK); // 确认发送完毕，保存文件
-      ym_rx_status = YMODEM_RX_IDLE;
+      __putchar('C');
       break;
+    case SOH:
+        __putchar(ACK);
+        ym_rx_status = YMODEM_RX_IDLE;
+        break;
     default:
       goto err;
       break;
