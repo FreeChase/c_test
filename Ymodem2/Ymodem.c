@@ -3,7 +3,7 @@
  **************************************************************************************************/
 #include "Ymodem.h"
 #include <string.h>
-#include <stdint.h>
+
 
 /*********************************************************************
  * CONSTANTS
@@ -34,6 +34,8 @@ static size_t seek;
 static size_t ym_tx_fil_sz;
 static char ym_tx_pbuf[PACKET_OVERHEAD + PACKET_1K_SIZE];
 static uint8 ym_cyc; // 发送时的轮转变量
+
+T_YmodemInfo gYmodemCtrl;
 /*********************************************************************
  * EXTERNAL VARIABLES
  */
@@ -49,7 +51,10 @@ static uint8 ym_cyc; // 发送时的轮转变量
 /*********************************************************************
  * FUNCTIONS
  *********************************************************************/
-
+void YmodemInit(void)
+{
+    memset((char*)&gYmodemCtrl, 0, sizeof(gYmodemCtrl));
+}
 unsigned short crc16(const unsigned char *buf, unsigned long count)
 {
   unsigned short crc = 0;
@@ -186,7 +191,8 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
 {
   if (0 == rx_sz) // 超时，从而得到的长度为0，则尝试发送“C”，并返回
   {
-    __putchar('C');
+    if(ym_rx_status == YMODEM_RX_IDLE)
+        __putchar('C');
     return;
   }
 
@@ -206,11 +212,13 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
       }
       else // 如果不是空包，则认为是第一个包（包含文件名和文件大小）
       {
-        if (pac_size == 128 && YMODEM_OK == ymodem_rx_prepare(buf + PACKET_HEADER, pac_size))
+        if (/*pac_size == 128 &&*/ YMODEM_OK == ymodem_rx_prepare(buf + PACKET_HEADER, pac_size))
         {
           __putchar(ACK);
           seek = 0; // 初始化变量，用于接收新文件
           __putchar('C');
+        //   gYmodemCtrl.newdata = 1;
+          gYmodemCtrl.u8packteNum = 0;
           ym_rx_status = YMODEM_RX_ACK;
         }
         else
@@ -232,11 +240,20 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
     {
     case SOH:
     case STX:
-      __putchar(ACK);
-      pac_size = (u8)(buf[0]) == SOH ? PACKET_SIZE : PACKET_1K_SIZE;
-      ymodem_rx_pac_get(buf + PACKET_HEADER, seek, pac_size); // 将接收的包保存
-      seek += pac_size;
-      __putchar('C');
+        if(gYmodemCtrl.u8packteNum == (uint8_t)buf[1])
+        {
+            printf("packet repeat!(%d)!\r\n",gYmodemCtrl.u8packteNum);
+            //* already receive the packet
+            __putchar(ACK);
+            break;
+        }
+        //* refresh packet num
+        gYmodemCtrl.u8packteNum = (uint8_t)buf[1];
+        __putchar(ACK);
+        pac_size = (u8)(buf[0]) == SOH ? PACKET_SIZE : PACKET_1K_SIZE;
+        ymodem_rx_pac_get(buf + PACKET_HEADER, seek, pac_size); // 将接收的包保存
+        seek += pac_size;
+        __putchar('C');
       break;
       // 指令包
     case EOT:

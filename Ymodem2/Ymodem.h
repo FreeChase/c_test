@@ -5,7 +5,7 @@
  **************************************************************************************************/
 #include <stdio.h>
 #include <string.h>
-
+#include <stdint.h>
 /*********************************************************************
  * CONSTANTS
  */
@@ -51,6 +51,10 @@ typedef unsigned char u8;
 typedef unsigned int size_t;
 typedef unsigned long unsigned_long;
 
+typedef struct{
+    uint8_t newdata;    //1.newdata
+    uint8_t u8packteNum;   
+}T_YmodemInfo;
 /*********************************************************************
  * FUNCTIONS
  *********************************************************************/

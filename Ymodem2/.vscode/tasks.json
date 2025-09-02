@@ -11,7 +11,8 @@
                 "${fileDirname}\\*.c",
                 "${fileDirname}\\*.h",
                 "-o",
-                "${fileDirname}\\${fileBasenameNoExtension}.exe"
+                "${fileDirname}\\${fileBasenameNoExtension}.exe",
+                "-lkernel32",
             ],
             "options": {
                 "cwd": "${fileDirname}"
