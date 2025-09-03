@@ -263,6 +263,7 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
       __putchar(ACK);
       ymodem_rx_finish(YMODEM_OK); // 确认发送完毕，保存文件
       __putchar('C');
+      ym_rx_status = YMODEM_RX_SOTNULL;
       break;
     case SOH:
         __putchar(ACK);
@@ -274,6 +275,19 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
     }
   }
   break;
+  case YMODEM_RX_SOTNULL: //wait sot null package
+    switch (ymodem_rx_pac_check(buf, rx_sz)) // 检查当前包是否合法,并返回包的类型
+    {
+    case SOH:
+        __putchar(ACK);
+        ym_rx_status = YMODEM_RX_IDLE;
+        break;
+    default:
+      goto err;
+      break;
+    }
+    ym_rx_status = YMODEM_RX_IDLE;
+    break;
   err:
   case YMODEM_RX_ERR: // 在这里放弃保存文件,终止传输
     __putchar(CAN);
@@ -456,6 +470,120 @@ void ymodem_tx_put(char *buf, size_t rx_sz)
   case YMODEM_TX_EXIT:
     ym_tx_status = YMODEM_TX_IDLE;
     return;
+  default:
+    break;
+  }
+}
+
+//* 字节流处理
+
+
+// 新增的全局变量
+YmodemParseState ymodem_state = STATE_WAITING_SOH;
+uint16_t data_len;
+char rx_buffer[PACKET_OVERHEAD + PACKET_1K_SIZE];
+size_t rx_byte_count = 0;
+char current_packet_type;
+//* Aseembe Packet of SOT STX
+void Assemble_SOTSTX(char current_byte) {
+    switch (ymodem_state) {
+        case STATE_WAITING_SOH:
+            if (current_byte == SOH || current_byte == STX)
+            {
+              current_packet_type = current_byte;
+              rx_buffer[0] = current_byte;
+              ymodem_state = STATE_WAITING_PKT_NUM;
+              rx_byte_count = 1;
+              data_len = (current_byte == SOH) ? PACKET_SIZE : PACKET_1K_SIZE;
+            }
+            else if (current_byte == EOT)
+            {
+              //* handle EOT after stx/sot
+              rx_buffer[0] = current_byte;
+              rx_byte_count = 1;
+              ymodem_rx_put(rx_buffer, rx_byte_count);
+            }
+            break;
+
+        case STATE_WAITING_PKT_NUM:
+            rx_buffer[rx_byte_count++] = current_byte;
+            ymodem_state = STATE_WAITING_PKT_NUM_INV;
+            break;
+
+        case STATE_WAITING_PKT_NUM_INV:
+            rx_buffer[rx_byte_count++] = current_byte;
+            uint8_t pkt_num = (uint8_t)rx_buffer[1];
+            uint8_t pkt_num_inv = (uint8_t)rx_buffer[2];
+            
+            if ((pkt_num + pkt_num_inv) == 0xFF) {
+                ymodem_state = STATE_WAITING_DATA;
+            } else {
+                ymodem_state = STATE_WAITING_SOH;
+            }
+            break;
+
+        case STATE_WAITING_DATA:
+            rx_buffer[rx_byte_count++] = current_byte;
+            if (rx_byte_count - 3 >= data_len) {
+                ymodem_state = STATE_WAITING_CRC_HI;
+            }
+            break;
+        
+        case STATE_WAITING_CRC_HI:
+            rx_buffer[rx_byte_count++] = current_byte;
+            ymodem_state = STATE_WAITING_CRC_LO;
+            break;
+
+        case STATE_WAITING_CRC_LO:
+            rx_buffer[rx_byte_count++] = current_byte;
+            if(ym_rx_status == YMODEM_RX_SOTNULL)
+            {
+              printf("recv sot null packet\r\n");
+            }
+            ymodem_rx_put(rx_buffer, rx_byte_count);
+            ymodem_state = STATE_WAITING_SOH;
+            break;
+
+        default:
+            ymodem_state = STATE_WAITING_SOH;
+            break;
+    }
+}
+//* other single data handle
+void Prcoess_Other(char current_byte) {
+      rx_buffer[0] = current_byte;
+      rx_byte_count = 1;
+      ymodem_rx_put(rx_buffer, rx_byte_count);
+}
+
+
+//*
+
+void YmodemProcess(char s8InputByte,char isValid)
+{
+  if(isValid == 0)
+  {
+    if(ym_rx_status == YMODEM_RX_IDLE)
+      __putchar('C');
+      return;
+  }
+  switch (ym_rx_status)
+  {
+  case YMODEM_RX_IDLE:
+    Assemble_SOTSTX(s8InputByte);
+    break;
+  case YMODEM_RX_ACK:                        // 1级——文件接收状态中
+    Assemble_SOTSTX(s8InputByte);
+    break;
+  case YMODEM_RX_SOTNULL:                        // 1级——文件接收状态中
+    Assemble_SOTSTX(s8InputByte);
+    break;
+  case YMODEM_RX_EOT: // 在这里保存文件
+  case YMODEM_RX_ERR: // 在这里放弃保存文件,终止传输
+  case YMODEM_RX_EXIT: // 到这里，就收拾好，然后退出
+    Prcoess_Other(s8InputByte);
+    break;
+
   default:
     break;
   }

@@ -35,8 +35,9 @@
 #define YMODEM_RX_IDLE 0
 #define YMODEM_RX_ACK 1
 #define YMODEM_RX_EOT 2
-#define YMODEM_RX_ERR 3
-#define YMODEM_RX_EXIT 4
+#define YMODEM_RX_SOTNULL 3
+#define YMODEM_RX_ERR 4
+#define YMODEM_RX_EXIT 5
 
 #define YMODEM_TX_IDLE 0
 #define YMODEM_TX_IDLE_ACK 1
@@ -73,6 +74,20 @@ typedef struct{
     uint8_t newdata;    //1.newdata
     uint8_t u8packteNum;   
 }T_YmodemInfo;
+
+
+//**************************************
+//* 字节流部分
+// 状态机定义
+typedef enum {
+    STATE_WAITING_SOH,
+    STATE_WAITING_PKT_NUM,
+    STATE_WAITING_PKT_NUM_INV,
+    STATE_WAITING_DATA,
+    STATE_WAITING_CRC_HI,
+    STATE_WAITING_CRC_LO,
+} YmodemParseState;
+//**************************************
 /*********************************************************************
  * FUNCTIONS
  *********************************************************************/
@@ -89,7 +104,8 @@ uint8 ymodem_tx_header( char  **fil_nm, size_t *fil_sz );
 uint8 ymodem_tx_finish( uint8 status );
 uint8 ymodem_tx_pac_get( char *buf, size_t offset, size_t size );
 
-void process_ymodem_byte(char current_byte);
+void Assemble_SOTSTX(char current_byte);
+void YmodemProcess(char s8InputByte,char isValid);
 // 底层I/O函数（现在是模拟的）
 void __putchar( char ch );
 void __putbuf( char* buf, size_t len );
