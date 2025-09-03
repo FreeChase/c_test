@@ -8,6 +8,7 @@
 #define RX_BUFFER_SIZE (1024 * 10) // 10KB 接收缓冲区
 static char rx_file_data[RX_BUFFER_SIZE];
 static size_t rx_file_size;
+char rx_file_name[128];
 
 // 用于发送的模拟文件
 static char tx_file_name[FILE_NAME_LENGTH] = "testfile.bin";
@@ -80,6 +81,7 @@ void serial_close() {
 uint8 ymodem_rx_header( char* fil_nm, size_t fil_sz )
 {
   printf("RX: Received file header. Name: %s, Size: %zu\n", fil_nm, fil_sz);
+  strcpy(rx_file_name,fil_nm);
   rx_file_size = fil_sz;
   if (rx_file_size > RX_BUFFER_SIZE) {
     return YMODEM_ERR;
@@ -90,7 +92,8 @@ uint8 ymodem_rx_header( char* fil_nm, size_t fil_sz )
 uint8 ymodem_rx_finish( uint8 status )
 {
   printf("RX: Transfer finished with status: %s\n", status == YMODEM_OK ? "OK" : "ERROR");
-  printf("RX: Final received data:\n%.*s\n", (int)rx_file_size, rx_file_data);
+  printf("RX: Final received data:%s\n", rx_file_data);
+  printf("FileName  %s size %d\n", rx_file_name,(int)rx_file_size);
   return YMODEM_OK;
 }
 
