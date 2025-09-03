@@ -73,6 +73,9 @@ typedef unsigned long unsigned_long;
 typedef struct{
     uint8_t newdata;    //1.newdata
     uint8_t u8packteNum;   
+    uint8_t rx_state;   // receive state   
+    size_t pac_size;
+    size_t seek;
 }T_YmodemInfo;
 
 

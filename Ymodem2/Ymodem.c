@@ -11,10 +11,10 @@
 /*********************************************************************
  * GLOBAL VARIABLES
  */
-static uint8 ym_rx_status = YMODEM_RX_IDLE;
+// static uint8 1ym_rx_status = YMODEM_RX_IDLE;
 static uint8 ym_tx_status = YMODEM_TX_IDLE;
-static size_t pac_size;
-static size_t seek;
+// static size_t gYmodemCtrl.pac_size;
+// static size_t gYmodemCtrl.seek;
 static size_t ym_tx_fil_sz;
 static char ym_tx_pbuf[PACKET_OVERHEAD + PACKET_1K_SIZE];
 static uint8 ym_cyc; // 发送时的轮转变量
@@ -38,6 +38,7 @@ T_YmodemInfo gYmodemCtrl;
 void YmodemInit(void)
 {
     memset((char*)&gYmodemCtrl, 0, sizeof(gYmodemCtrl));
+    gYmodemCtrl.rx_state = YMODEM_RX_IDLE;
 }
 unsigned short crc16(const unsigned char *buf, unsigned long count)
 {
@@ -175,42 +176,42 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
 {
   if (0 == rx_sz) // 超时，从而得到的长度为0，则尝试发送“C”，并返回
   {
-    if(ym_rx_status == YMODEM_RX_IDLE)
+    if(gYmodemCtrl.rx_state == YMODEM_RX_IDLE)
         __putchar('C');
     return;
   }
 
-  switch (ym_rx_status)
+  switch (gYmodemCtrl.rx_state)
   {
   case YMODEM_RX_IDLE:
     switch (ymodem_rx_pac_check(buf, rx_sz)) // 检查当前包是否合法,并返回包的类型
     {
     case SOH:
     case STX:
-      pac_size = (u8)(buf[0]) == SOH ? PACKET_SIZE : PACKET_1K_SIZE;
-      if (1 == ymodem_rx_pac_if_empty(buf + PACKET_HEADER, pac_size))// 判断是否是空包
+      gYmodemCtrl.pac_size = (u8)(buf[0]) == SOH ? PACKET_SIZE : PACKET_1K_SIZE;
+      if (1 == ymodem_rx_pac_if_empty(buf + PACKET_HEADER, gYmodemCtrl.pac_size))// 判断是否是空包
       {
         __putchar(ACK);
-        ym_rx_status = YMODEM_RX_EXIT;
+        gYmodemCtrl.rx_state = YMODEM_RX_EXIT;
         goto exit; // 这是在本循环必须完成的操作，所以需要用到 goto 语句
       }
       else // 如果不是空包，则认为是第一个包（包含文件名和文件大小）
       {
-        if (/*pac_size == 128 &&*/ YMODEM_OK == ymodem_rx_prepare(buf + PACKET_HEADER, pac_size))
+        if (/*gYmodemCtrl.pac_size == 128 &&*/ YMODEM_OK == ymodem_rx_prepare(buf + PACKET_HEADER, gYmodemCtrl.pac_size))
         {
           __putchar(ACK);
-          seek = 0; // 初始化变量，用于接收新文件
+          gYmodemCtrl.seek = 0; // 初始化变量，用于接收新文件
           __putchar('C');
         //   gYmodemCtrl.newdata = 1;
           gYmodemCtrl.u8packteNum = 0;
-          ym_rx_status = YMODEM_RX_ACK;
+          gYmodemCtrl.rx_state = YMODEM_RX_ACK;
         }
         else
           goto err; // 在IDLE中接收到一个1024的数据包，则肯定是状态有问题
       }
       break;
     case EOT:
-      ym_rx_status = YMODEM_RX_EXIT;
+      gYmodemCtrl.rx_state = YMODEM_RX_EXIT;
       goto exit; // 这是在本循环必须完成的操作，所以需要用到 goto 语句
       break;
     default:
@@ -234,18 +235,18 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
         //* refresh packet num
         gYmodemCtrl.u8packteNum = (uint8_t)buf[1];
         __putchar(ACK);
-        pac_size = (u8)(buf[0]) == SOH ? PACKET_SIZE : PACKET_1K_SIZE;
-        ymodem_rx_pac_get(buf + PACKET_HEADER, seek, pac_size); // 将接收的包保存
-        seek += pac_size;
+        gYmodemCtrl.pac_size = (u8)(buf[0]) == SOH ? PACKET_SIZE : PACKET_1K_SIZE;
+        ymodem_rx_pac_get(buf + PACKET_HEADER, gYmodemCtrl.seek, gYmodemCtrl.pac_size); // 将接收的包保存
+        gYmodemCtrl.seek += gYmodemCtrl.pac_size;
         // __putchar('C');
       break;
       // 指令包
     case EOT:
       __putchar(NAK);
-      ym_rx_status = YMODEM_RX_EOT;
+      gYmodemCtrl.rx_state = YMODEM_RX_EOT;
       break;
     case CAN:
-      ym_rx_status = YMODEM_RX_ERR;
+      gYmodemCtrl.rx_state = YMODEM_RX_ERR;
       goto err;
       break;
     default:
@@ -263,11 +264,11 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
       __putchar(ACK);
       ymodem_rx_finish(YMODEM_OK); // 确认发送完毕，保存文件
       __putchar('C');
-      ym_rx_status = YMODEM_RX_SOTNULL;
+      gYmodemCtrl.rx_state = YMODEM_RX_SOTNULL;
       break;
     case SOH:
         __putchar(ACK);
-        ym_rx_status = YMODEM_RX_IDLE;
+        gYmodemCtrl.rx_state = YMODEM_RX_IDLE;
         break;
     default:
       goto err;
@@ -280,13 +281,13 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
     {
     case SOH:
         __putchar(ACK);
-        ym_rx_status = YMODEM_RX_IDLE;
+        gYmodemCtrl.rx_state = YMODEM_RX_IDLE;
         break;
     default:
       goto err;
       break;
     }
-    ym_rx_status = YMODEM_RX_IDLE;
+    gYmodemCtrl.rx_state = YMODEM_RX_IDLE;
     break;
   err:
   case YMODEM_RX_ERR: // 在这里放弃保存文件,终止传输
@@ -295,7 +296,7 @@ void ymodem_rx_put(char *buf, size_t rx_sz)
     // break;                    //没有break，和下面公用代码
   exit:
   case YMODEM_RX_EXIT: // 到这里，就收拾好，然后退出
-    ym_rx_status = YMODEM_RX_IDLE;
+    gYmodemCtrl.rx_state = YMODEM_RX_IDLE;
     // No more calls to ymodem_rx_put()
     return;
   default:
@@ -392,7 +393,7 @@ void ymodem_tx_put(char *buf, size_t rx_sz)
     switch (ymodem_rx_pac_check(buf, rx_sz))
     {
     case CNC:
-      if (YMODEM_OK == ymodem_tx_pac_get(ym_tx_pbuf + PACKET_HEADER, seek, PACKET_1K_SIZE))
+      if (YMODEM_OK == ymodem_tx_pac_get(ym_tx_pbuf + PACKET_HEADER, gYmodemCtrl.seek, PACKET_1K_SIZE))
       {
         if (YMODEM_OK == ymodem_tx_make_pac_data(ym_tx_pbuf, PACKET_1K_SIZE))
         {
@@ -419,8 +420,8 @@ void ymodem_tx_put(char *buf, size_t rx_sz)
     switch (ymodem_rx_pac_check(buf, rx_sz))
     {
     case ACK:
-      seek += PACKET_1K_SIZE;
-      if (seek < ym_tx_fil_sz)
+      gYmodemCtrl.seek += PACKET_1K_SIZE;
+      if (gYmodemCtrl.seek < ym_tx_fil_sz)
         ym_tx_status = YMODEM_TX_DATA;
       else
       {
@@ -429,8 +430,8 @@ void ymodem_tx_put(char *buf, size_t rx_sz)
       }
       break;
     case CNC:
-      seek += PACKET_1K_SIZE;
-      if (seek < ym_tx_fil_sz)
+      gYmodemCtrl.seek += PACKET_1K_SIZE;
+      if (gYmodemCtrl.seek < ym_tx_fil_sz)
       {
         ym_tx_status = YMODEM_TX_DATA;
         goto dt_tx;
@@ -536,7 +537,7 @@ void Assemble_SOTSTX(char current_byte) {
 
         case STATE_WAITING_CRC_LO:
             rx_buffer[rx_byte_count++] = current_byte;
-            if(ym_rx_status == YMODEM_RX_SOTNULL)
+            if(gYmodemCtrl.rx_state == YMODEM_RX_SOTNULL)
             {
               printf("recv sot null packet\r\n");
             }
@@ -563,11 +564,11 @@ void YmodemProcess(char s8InputByte,char isValid)
 {
   if(isValid == 0)
   {
-    if(ym_rx_status == YMODEM_RX_IDLE)
+    if(gYmodemCtrl.rx_state == YMODEM_RX_IDLE)
       __putchar('C');
       return;
   }
-  switch (ym_rx_status)
+  switch (gYmodemCtrl.rx_state)
   {
   case YMODEM_RX_IDLE:
     Assemble_SOTSTX(s8InputByte);
