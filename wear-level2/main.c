@@ -58,10 +58,10 @@ typedef struct {
 
     // --- Wear-Leveling State Structure ---
 typedef struct {
-    uint32_t curDataUnitIndex;
-    uint32_t current_write_counter;
-    int validDataUnit;  // Cache for faster reads
-    uint32_t last_valid_counter; // Track counter of latest valid block
+    uint32_t curDataUnitIndex;      //current Data Unit index
+    uint32_t current_write_counter; //current  be written Data Unit index
+    int validDataUnit;              // info valid flag
+    uint32_t last_valid_counter;    // Track counter of latest valid block
 } WearLevelState_t;
 
 static WearLevelState_t wear_state = {

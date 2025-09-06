@@ -17,3 +17,9 @@ KMP算法，在一串字符串中匹配目标字符
 
 ## uartRoute
 串口字符实现路由功能，不同的uart字符流向不同串口
+
+## memdis
+实现xprintf 和 hex+ascii输出RAM数据，方便打印RAM内容并分析
+
+## wear-level2
+实现flash的均衡磨损算法，详细信息看目录下的README
