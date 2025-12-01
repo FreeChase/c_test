@@ -1,0 +1,595 @@
+#include "xbsp.h"
+/***************************** Include Files *******************************/
+
+
+/************************** Constant Definitions **************************/
+
+/*
+ * The following constants map to the XPAR parameters created in the
+ * xparameters.h file. They are defined here such that a user can easily
+ * change all the needed parameters in one place.
+ */
+
+#define INTC		XScuGic
+#define UART_DEVICE_ID		XPAR_XUARTPS_0_DEVICE_ID
+#define INTC_DEVICE_ID		XPAR_SCUGIC_SINGLE_DEVICE_ID
+#define UART_INT_IRQ_ID		XPAR_XUARTPS_0_INTR
+
+/*
+ * The following constant controls the length of the buffers to be sent
+ * and received with the UART,
+ */
+#define TEST_BUFFER_SIZE	100
+
+int (* gpfUartPsPutByte )(char ch); 
+XUartPs gUartPs	;		/* Instance of the UART Device */
+/**************************** Type Definitions ******************************/
+
+
+/************************** Function Prototypes *****************************/
+
+int UartPsIntrExample(INTC *IntcInstPtr, XUartPs *UartInstPtr,
+			u16 DeviceId, u16 UartIntrId);
+
+
+static int SetupInterruptSystem(INTC *IntcInstancePtr,
+				XUartPs *UartInstancePtr,
+				u16 UartIntrId);
+
+void Handler(void *CallBackRef, u32 Event, unsigned int EventData);
+
+static void ReceiveDataHandler(XUartPs *InstancePtr);
+static void SendDataHandler(XUartPs *InstancePtr, u32 IsrStatus);
+static void ReceiveErrorHandler(XUartPs *InstancePtr, u32 IsrStatus);
+static void ReceiveTimeoutHandler(XUartPs *InstancePtr);
+static void ModemHandler(XUartPs *InstancePtr);
+/************************** Variable Definitions ***************************/
+#if 0
+XUartPs UartPs	;		/* Instance of the UART Device */
+INTC InterruptController;	/* Instance of the Interrupt Controller */
+#endif
+
+/*
+ * The following counters are used to determine when the entire buffer has
+ * been sent and received.
+ */
+#if 0
+volatile int TotalReceivedCount;
+volatile int TotalSentCount;
+int TotalErrorCount;
+#endif
+
+/**************************************************************************/
+/**
+*
+* This function does a minimal test on the UartPS device and driver as a
+* design example. The purpose of this function is to illustrate
+* how to use the XUartPs driver.
+*
+* This function sends data and expects to receive the same data through the
+* device using the local loopback mode.
+*
+* This function uses interrupt mode of the device.
+*
+* @param	IntcInstPtr is a pointer to the instance of the Scu Gic driver.
+* @param	UartInstPtr is a pointer to the instance of the UART driver
+*		which is going to be connected to the interrupt controller.
+* @param	DeviceId is the device Id of the UART device and is typically
+*		XPAR_<UARTPS_instance>_DEVICE_ID value from xparameters.h.
+* @param	UartIntrId is the interrupt Id and is typically
+*		XPAR_<UARTPS_instance>_INTR value from xparameters.h.
+*
+* @return	XST_SUCCESS if successful, otherwise XST_FAILURE.
+*
+* @note
+*
+* This function contains an infinite loop such that if interrupts are not
+* working it may never return.
+*
+**************************************************************************/
+static int _UartPsInit( XUartPs *UartInstPtr,
+			u16 DeviceId, u16 UartIntrId)
+{
+	int Status;
+	XUartPs_Config *Config;
+	int Index;
+	u32 IntrMask;
+	int BadByteCount = 0;
+
+
+	/*
+	 * Initialize the UART driver so that it's ready to use
+	 * Look up the configuration in the config table, then initialize it.
+	 */
+	Config = XUartPs_LookupConfig(DeviceId);
+	if (NULL == Config) {
+		return XST_FAILURE;
+	}
+
+	Status = XUartPs_CfgInitialize(UartInstPtr, Config, Config->BaseAddress);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+
+	/* Check hardware build */
+	Status = XUartPs_SelfTest(UartInstPtr);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+#if 0
+	/*
+	 * Connect the UART to the interrupt subsystem such that interrupts
+	 * can occur. This function is application specific.
+	 */
+	Status = SetupInterruptSystem(IntcInstPtr, UartInstPtr, UartIntrId);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+#endif
+
+	/*
+	 * Connect the interrupt controller interrupt handler to the
+	 * hardware interrupt handling logic in the processor.
+	 */
+	Xil_ExceptionRegisterHandler(XIL_EXCEPTION_ID_INT,
+				(Xil_ExceptionHandler) XScuGic_InterruptHandler,
+				(void*)&gInterruptController);
+
+	/*
+	 * Connect a device driver handler that will be called when an
+	 * interrupt for the device occurs, the device driver handler
+	 * performs the specific interrupt processing for the device
+	 */
+	Status = XScuGic_Connect(&gInterruptController, UartIntrId,
+				  (Xil_ExceptionHandler) XUartPs_InterruptHandler,
+				  (void *) UartInstPtr);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+
+	/* Enable the interrupt for the device */
+	XScuGic_Enable(&gInterruptController, UartIntrId);
+
+
+	/* Enable interrupts */
+	 Xil_ExceptionEnable();
+
+
+	/*
+	 * Setup the handlers for the UART that will be called from the
+	 * interrupt context when data has been sent and received, specify
+	 * a pointer to the UART driver instance as the callback reference
+	 * so the handlers are able to access the instance data
+	 */
+	// XUartPs_SetHandler(UartInstPtr, (XUartPs_Handler)Handler, UartInstPtr);
+
+	/*
+	 * Enable the interrupt of the UART so interrupts will occur, setup
+	 * a local loopback so data that is sent will be received.
+	 */
+	IntrMask =
+		XUARTPS_IXR_TOUT | XUARTPS_IXR_PARITY | XUARTPS_IXR_FRAMING |
+		XUARTPS_IXR_OVER | XUARTPS_IXR_TXEMPTY | XUARTPS_IXR_RXFULL |
+		XUARTPS_IXR_RXOVR;
+
+	if (UartInstPtr->Platform == XPLAT_ZYNQ_ULTRA_MP) {
+		IntrMask |= XUARTPS_IXR_RBRK;
+	}
+
+	XUartPs_SetInterruptMask(UartInstPtr, IntrMask);
+
+
+	/*
+	 * Set the receiver timeout. If it is not set, and the last few bytes
+	 * of data do not trigger the over-water or full interrupt, the bytes
+	 * will not be received. By default it is disabled.
+	 *
+	 * The setting of 8 will timeout after 8 x 4 = 32 character times.
+	 * Increase the time out value if baud rate is high, decrease it if
+	 * baud rate is low.
+	 */
+	XUartPs_SetRecvTimeout(UartInstPtr, 8);
+
+	return XST_SUCCESS;
+}
+#if 0
+/**************************************************************************/
+/**
+*
+* This function is the handler which performs processing to handle data events
+* from the device.  It is called from an interrupt context. so the amount of
+* processing should be minimal.
+*
+* This handler provides an example of how to handle data for the device and
+* is application specific.
+*
+* @param	CallBackRef contains a callback reference from the driver,
+*		in this case it is the instance pointer for the XUartPs driver.
+* @param	Event contains the specific kind of event that has occurred.
+* @param	EventData contains the number of bytes sent or received for sent
+*		and receive events.
+*
+* @return	None.
+*
+* @note		None.
+*
+***************************************************************************/
+void Handler(void *CallBackRef, u32 Event, unsigned int EventData)
+{
+	/* All of the data has been sent */
+	if (Event == XUARTPS_EVENT_SENT_DATA) {
+		TotalSentCount = EventData;
+	}
+
+	/* All of the data has been received */
+	if (Event == XUARTPS_EVENT_RECV_DATA) {
+		TotalReceivedCount = EventData;
+	}
+
+	/*
+	 * Data was received, but not the expected number of bytes, a
+	 * timeout just indicates the data stopped for 8 character times
+	 */
+	if (Event == XUARTPS_EVENT_RECV_TOUT) {
+		TotalReceivedCount = EventData;
+	}
+
+	/*
+	 * Data was received with an error, keep the data but determine
+	 * what kind of errors occurred
+	 */
+	if (Event == XUARTPS_EVENT_RECV_ERROR) {
+		TotalReceivedCount = EventData;
+		TotalErrorCount++;
+	}
+
+	/*
+	 * Data was received with an parity or frame or break error, keep the data
+	 * but determine what kind of errors occurred. Specific to Zynq Ultrascale+
+	 * MP.
+	 */
+	if (Event == XUARTPS_EVENT_PARE_FRAME_BRKE) {
+		TotalReceivedCount = EventData;
+		TotalErrorCount++;
+	}
+
+	/*
+	 * Data was received with an overrun error, keep the data but determine
+	 * what kind of errors occurred. Specific to Zynq Ultrascale+ MP.
+	 */
+	if (Event == XUARTPS_EVENT_RECV_ORERR) {
+		TotalReceivedCount = EventData;
+		TotalErrorCount++;
+	}
+}
+#endif
+
+/****************************************************************************/
+/**
+*
+* This function is the interrupt handler for the driver.
+* It must be connected to an interrupt system by the application such that it
+* can be called when an interrupt occurs.
+*
+* @param	InstancePtr contains a pointer to the driver instance
+*
+* @return	None.
+*
+* @note		None.
+*
+******************************************************************************/
+void MyXUartPs_InterruptHandler(XUartPs *InstancePtr)
+{
+	u32 IsrStatus;
+
+	Xil_AssertVoid(InstancePtr != NULL);
+	Xil_AssertVoid(InstancePtr->IsReady == XIL_COMPONENT_IS_READY);
+
+	/*
+	 * Read the interrupt ID register to determine which
+	 * interrupt is active
+	 */
+	IsrStatus = XUartPs_ReadReg(InstancePtr->Config.BaseAddress,
+				   XUARTPS_IMR_OFFSET);
+
+	IsrStatus &= XUartPs_ReadReg(InstancePtr->Config.BaseAddress,
+				   XUARTPS_ISR_OFFSET);
+
+	/* Dispatch an appropriate handler. */
+	if((IsrStatus & ((u32)XUARTPS_IXR_RXOVR | (u32)XUARTPS_IXR_RXEMPTY |
+			(u32)XUARTPS_IXR_RXFULL)) != (u32)0) {
+		/* Received data interrupt */
+		ReceiveDataHandler(InstancePtr);
+	}
+
+	if((IsrStatus & ((u32)XUARTPS_IXR_TXEMPTY | (u32)XUARTPS_IXR_TXFULL))
+									 != (u32)0) {
+		/* Transmit data interrupt */
+		SendDataHandler(InstancePtr, IsrStatus);
+	}
+
+	/* XUARTPS_IXR_RBRK is applicable only for Zynq Ultrascale+ MP */
+	if ((IsrStatus & ((u32)XUARTPS_IXR_OVER | (u32)XUARTPS_IXR_FRAMING |
+			(u32)XUARTPS_IXR_PARITY | (u32)XUARTPS_IXR_RBRK)) != (u32)0) {
+		/* Received Error Status interrupt */
+		ReceiveErrorHandler(InstancePtr, IsrStatus);
+	}
+
+	if((IsrStatus & ((u32)XUARTPS_IXR_TOUT)) != (u32)0) {
+		/* Received Timeout interrupt */
+		ReceiveTimeoutHandler(InstancePtr);
+	}
+
+	if((IsrStatus & ((u32)XUARTPS_IXR_DMS)) != (u32)0) {
+		/* Modem status interrupt */
+		ModemHandler(InstancePtr);
+	}
+
+	/* Clear the interrupt status. */
+	XUartPs_WriteReg(InstancePtr->Config.BaseAddress, XUARTPS_ISR_OFFSET,
+		IsrStatus);
+
+}
+
+
+/*****************************************************************************/
+/**
+*
+* This function sets up the interrupt system so interrupts can occur for the
+* Uart. This function is application-specific. The user should modify this
+* function to fit the application.
+*
+* @param	IntcInstancePtr is a pointer to the instance of the INTC.
+* @param	UartInstancePtr contains a pointer to the instance of the UART
+*		driver which is going to be connected to the interrupt
+*		controller.
+* @param	UartIntrId is the interrupt Id and is typically
+*		XPAR_<UARTPS_instance>_INTR value from xparameters.h.
+*
+* @return	XST_SUCCESS if successful, otherwise XST_FAILURE.
+*
+* @note		None.
+*
+****************************************************************************/
+static int SetupInterruptSystem(INTC *IntcInstancePtr,
+				XUartPs *UartInstancePtr,
+				u16 UartIntrId)
+{
+	int Status;
+
+
+	XScuGic_Config *IntcConfig; /* Config for interrupt controller */
+
+	/* Initialize the interrupt controller driver */
+	IntcConfig = XScuGic_LookupConfig(INTC_DEVICE_ID);
+	if (NULL == IntcConfig) {
+		return XST_FAILURE;
+	}
+
+	Status = XScuGic_CfgInitialize(IntcInstancePtr, IntcConfig,
+					IntcConfig->CpuBaseAddress);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+
+	/*
+	 * Connect the interrupt controller interrupt handler to the
+	 * hardware interrupt handling logic in the processor.
+	 */
+	Xil_ExceptionRegisterHandler(XIL_EXCEPTION_ID_INT,
+				(Xil_ExceptionHandler) XScuGic_InterruptHandler,
+				IntcInstancePtr);
+
+
+	/*
+	 * Connect a device driver handler that will be called when an
+	 * interrupt for the device occurs, the device driver handler
+	 * performs the specific interrupt processing for the device
+	 */
+	Status = XScuGic_Connect(IntcInstancePtr, UartIntrId,
+				  (Xil_ExceptionHandler) MyXUartPs_InterruptHandler,
+				  (void *) UartInstancePtr);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
+
+	/* Enable the interrupt for the device */
+	XScuGic_Enable(IntcInstancePtr, UartIntrId);
+
+	/* Enable interrupts */
+	 Xil_ExceptionEnable();
+
+
+	return XST_SUCCESS;
+}
+
+int UartPs0Init(void)
+{
+	_UartPsInit( &gUartPs, UART_DEVICE_ID, INTC_DEVICE_ID);
+}
+
+
+int UartGetData(XUartPs *InstancePtr)
+{
+	u32 CsrRegister;
+	u32 ReceivedCount = 0U;
+	u32 ByteStatusValue, EventData;
+	u32 Event;
+	u32 u32regVal=0;
+	/*
+	 * Read the Channel Status Register to determine if there is any data in
+	 * the RX FIFO
+	 */
+	CsrRegister = XUartPs_ReadReg(InstancePtr->Config.BaseAddress,
+				XUARTPS_SR_OFFSET);
+
+	/*
+	 * Loop until there is no more data in RX FIFO or the specified
+	 * number of bytes has been received
+	 */
+	while((( (CsrRegister & XUARTPS_SR_RXEMPTY) == (u32)0))){
+
+
+
+		u32regVal =	XUartPs_ReadReg(InstancePtr->Config.BaseAddress,XUARTPS_FIFO_OFFSET);
+
+		gpfUartPsPutByte(u32regVal&0xff);
+		CsrRegister = XUartPs_ReadReg(InstancePtr->Config.BaseAddress,XUARTPS_SR_OFFSET);
+	}
+}
+/****************************************************************************/
+/*
+*
+* This function handles interrupts for receive errors which include
+* overrun errors, framing errors, parity errors, and the break interrupt.
+*
+* @param	InstancePtr is a pointer to the XUartPs instance.
+*
+* @return	None.
+*
+* @note		None.
+*
+*****************************************************************************/
+static void ReceiveErrorHandler(XUartPs *InstancePtr, u32 IsrStatus)
+{
+	u32 EventData;
+	u32 Event;
+
+	InstancePtr->is_rxbs_error = 0;
+
+	if ((InstancePtr->Platform == XPLAT_ZYNQ_ULTRA_MP) &&
+		(IsrStatus & ((u32)XUARTPS_IXR_PARITY | (u32)XUARTPS_IXR_RBRK
+					| (u32)XUARTPS_IXR_FRAMING))) {
+		InstancePtr->is_rxbs_error = 1;
+	}
+	/*
+	 * If there are bytes still to be received in the specified buffer
+	 * go ahead and receive them. Removing bytes from the RX FIFO will
+	 * clear the interrupt.
+	 */
+
+	(void)XUartPs_ReceiveBuffer(InstancePtr);
+
+	if (!(InstancePtr->is_rxbs_error)) {
+		Event = XUARTPS_EVENT_RECV_ERROR;
+		EventData = InstancePtr->ReceiveBuffer.RequestedBytes -
+			InstancePtr->ReceiveBuffer.RemainingBytes;
+
+		/*
+		 * Call the application handler to indicate that there is a receive
+		 * error or a break interrupt, if the application cares about the
+		 * error it call a function to get the last errors.
+		 */
+		InstancePtr->Handler(InstancePtr->CallBackRef,
+					Event,
+					EventData);
+	}
+}
+
+/****************************************************************************/
+/**
+*
+* This function handles the receive timeout interrupt. This interrupt occurs
+* whenever a number of bytes have been present in the RX FIFO and the receive
+* data line has been idle for at lease 4 or more character times, (the timeout
+* is set using XUartPs_SetrecvTimeout() function).
+*
+* @param	InstancePtr is a pointer to the XUartPs instance
+*
+* @return	None.
+*
+* @note		None.
+*
+*****************************************************************************/
+static void ReceiveTimeoutHandler(XUartPs *InstancePtr)
+{
+	UartGetData(InstancePtr);
+}
+/****************************************************************************/
+/**
+*
+* This function handles the interrupt when data is in RX FIFO.
+*
+* @param	InstancePtr is a pointer to the XUartPs instance
+*
+* @return	None.
+*
+* @note		None.
+*
+*****************************************************************************/
+static void ReceiveDataHandler(XUartPs *InstancePtr)
+{
+	UartGetData(InstancePtr);
+}	
+
+/****************************************************************************/
+/**
+*
+* This function handles the interrupt when data has been sent, the transmit
+* FIFO is empty (transmitter holding register).
+*
+* @param	InstancePtr is a pointer to the XUartPs instance
+* @param	IsrStatus is the register value for channel status register
+*
+* @return	None.
+*
+* @note		None.
+*
+*****************************************************************************/
+static void SendDataHandler(XUartPs *InstancePtr, u32 IsrStatus)
+{
+
+	/*
+	 * If there are not bytes to be sent from the specified buffer then disable
+	 * the transmit interrupt so it will stop interrupting as it interrupts
+	 * any time the FIFO is empty
+	 */
+	if (InstancePtr->SendBuffer.RemainingBytes == (u32)0) {
+		XUartPs_WriteReg(InstancePtr->Config.BaseAddress,
+				XUARTPS_IDR_OFFSET,
+				((u32)XUARTPS_IXR_TXEMPTY | (u32)XUARTPS_IXR_TXFULL));
+
+		/* Call the application handler to indicate the sending is done */
+		InstancePtr->Handler(InstancePtr->CallBackRef,
+					XUARTPS_EVENT_SENT_DATA,
+					InstancePtr->SendBuffer.RequestedBytes -
+					InstancePtr->SendBuffer.RemainingBytes);
+	}
+
+	/* If TX FIFO is empty, send more. */
+	else if((IsrStatus & ((u32)XUARTPS_IXR_TXEMPTY)) != (u32)0) {
+		(void)XUartPs_SendBuffer(InstancePtr);
+	}
+	else {
+		/* Else with dummy entry for MISRA-C Compliance.*/
+		;
+	}
+}
+
+/****************************************************************************/
+/**
+*
+* This function handles modem interrupts.  It does not do any processing
+* except to call the application handler to indicate a modem event.
+*
+* @param	InstancePtr is a pointer to the XUartPs instance
+*
+* @return	None.
+*
+* @note		None.
+*
+*****************************************************************************/
+static void ModemHandler(XUartPs *InstancePtr)
+{
+	u32 MsrRegister;
+
+	/*
+	 * Read the modem status register so that the interrupt is acknowledged
+	 * and it can be passed to the callback handler with the event
+	 */
+	MsrRegister = XUartPs_ReadReg(InstancePtr->Config.BaseAddress,
+			  XUARTPS_MODEMSR_OFFSET);
+
+
+}
+/** @} */
