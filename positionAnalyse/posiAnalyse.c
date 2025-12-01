@@ -218,7 +218,7 @@ void parse_and_print(SatellitePositionInfo *frame) {
     
     // 计算完整帧大小
     size_t fixed_size = offsetof(SatellitePositionInfo, sats);
-    size_t sat_size = 16/*frame->vin*/ * sizeof(SatelliteInfo);
+    size_t sat_size = frame->vin * sizeof(SatelliteInfo);
     size_t total_size = fixed_size + sat_size;
     uint16_t crc_value = *(uint16_t*)((uint8_t*)frame + total_size);
     uint16_t sat_valid = 0;
@@ -523,6 +523,9 @@ int main(int argc, char *argv[]) {
 
     printf(" cmd type 0x%x\r\n",atoi(argv[2]));
     
+    uint16_t crc16 = crc_ccitt("Hello",strlen("Hello"));
+
+    printf("HelloCrc : 0x%x\r\n",crc16);
     uint8_t hex_cmd = atoi(argv[2]);
     // 处理数据帧
     long offset = 0;
@@ -543,6 +546,9 @@ int main(int argc, char *argv[]) {
                 // 计算完整帧大小 (帧头2字节 + 数据长度2字节 + 有效数据长度 + CRC2字节)
                 size_t frame_size = 4 + data_length + 2;
                 
+                printf("data_length 0x%x frame_size 0x%x\n",data_length,frame_size);
+                printf("visual_sat %d\r\n",frame->vin);
+                printf("used_sat %d\r\n",frame->van);
                 // 检查帧完整性
                 if (offset + frame_size > file_size) {
                     printf("文件结尾，数据不完整\n");
