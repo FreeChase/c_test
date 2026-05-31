@@ -1,7 +1,7 @@
-#include "circlebuf_x.h"
+#include "circlebuf_int.h"
 //#include <dxdbg.h>
 
-void initializeBuffer(CircularBuffer *cBuffer, char *pbuf, int size) {
+void initializeBufferInt(CircularBuffer_Int *cBuffer, int *pbuf, int size) {
 
     //err_t result;
     cBuffer->buffer = pbuf;
@@ -16,7 +16,7 @@ void initializeBuffer(CircularBuffer *cBuffer, char *pbuf, int size) {
 #endif
 }
 
-int writeBufferMutex(CircularBuffer *cBuffer, char data) {
+int writeBufferIntMutex(CircularBuffer_Int *cBuffer, int data) {
 #ifdef USE_OS
     // if (xSemaphoreTake(cBuffer->writeMutex, portMAX_DELAY) != pdTRUE) {
     //     // 无法获取写互斥锁，写入失败
@@ -50,25 +50,8 @@ int writeBufferMutex(CircularBuffer *cBuffer, char data) {
     }
 }
 
-int writeBufferFromISR(CircularBuffer *cBuffer, char data) {
-#if 0
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    int writeSuccess = 0;
+int writeBufferIntFromISR(CircularBuffer_Int *cBuffer, int data) {
 
-    if (xSemaphoreTakeFromISR(cBuffer->writeMutex, &xHigherPriorityTaskWoken) == pdTRUE) {
-        if ((cBuffer->tail + 1) % cBuffer->size != cBuffer->head) {
-            cBuffer->buffer[cBuffer->tail] = data;
-            cBuffer->tail = (cBuffer->tail + 1) % cBuffer->size;
-            writeSuccess = 1; // 写入成功
-        }
-
-        xSemaphoreGiveFromISR(cBuffer->writeMutex, &xHigherPriorityTaskWoken);
-    }
-
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-    return writeSuccess;
-#endif
-    //? 中断中释放锁，待补充完善
     return 0;
 }
 
@@ -79,7 +62,7 @@ int writeBufferFromISR(CircularBuffer *cBuffer, char data) {
  * @param length 要写入的数据长度
  * @return 成功写入的数据数量，若写入失败则返回 0
  */
-int writeBufferMultipleMutex(CircularBuffer *cBuffer, char *data, int length) {
+int writeBufferIntMultipleMutex(CircularBuffer_Int *cBuffer, int *data, int length) {
 #ifdef USE_OS
     // 尝试获取写互斥锁
     // if (xSemaphoreTake(cBuffer->writeMutex, portMAX_DELAY) != pdTRUE) {
@@ -96,7 +79,7 @@ int writeBufferMultipleMutex(CircularBuffer *cBuffer, char *data, int length) {
 
     int successCount = 0;
     // 获取可写容量
-    int capacity = getWritableCapacityNoMutex(cBuffer);
+    int capacity = getIntWritableCapacityNoMutex(cBuffer);
 
     // 如果可写容量小于待写入数据长度，直接返回写入失败
     if (capacity < length) {
@@ -125,7 +108,7 @@ int writeBufferMultipleMutex(CircularBuffer *cBuffer, char *data, int length) {
 }
 
 
-int readBufferMutex(CircularBuffer *cBuffer, char *data) {
+int readBufferIntMutex(CircularBuffer_Int *cBuffer, int *data) {
 #ifdef USE_OS
     // if (xSemaphoreTake(cBuffer->readMutex, portMAX_DELAY) != pdTRUE) {
     //     // 无法获取读互斥锁，读取失败
@@ -159,7 +142,7 @@ int readBufferMutex(CircularBuffer *cBuffer, char *data) {
     }
 }
 
-int readBufferMultipleMutex(CircularBuffer *cBuffer, char *data, int length) {
+int readBufferIntMultipleMutex(CircularBuffer_Int *cBuffer, int *data, int length) {
 #ifdef USE_OS
     // if (xSemaphoreTake(cBuffer->readMutex, portMAX_DELAY) != pdTRUE) {
     //     // 无法获取读互斥锁，读取失败
@@ -196,7 +179,7 @@ int readBufferMultipleMutex(CircularBuffer *cBuffer, char *data, int length) {
 
 // 以下是不使用互斥锁的读写接口
 
-int writeBufferNoMutex(CircularBuffer *cBuffer, char data) {
+int writeBufferIntNoMutex(CircularBuffer_Int *cBuffer, int data) {
     if ((cBuffer->tail + 1) % cBuffer->size == cBuffer->head) {
         // 缓冲区已满
         return 0;
@@ -207,7 +190,7 @@ int writeBufferNoMutex(CircularBuffer *cBuffer, char data) {
     }
 }
 
-int readBufferNoMutex(CircularBuffer *cBuffer, char *data) {
+int readBufferIntNoMutex(CircularBuffer_Int *cBuffer, int *data) {
     if (cBuffer->head == cBuffer->tail) {
         // 缓冲区为空
         return 0;
@@ -218,7 +201,7 @@ int readBufferNoMutex(CircularBuffer *cBuffer, char *data) {
     }
 }
 
-int readBufferMultipleNoMutex(CircularBuffer *cBuffer, char *data, int length) {
+int readBufferIntMultipleNoMutex(CircularBuffer_Int *cBuffer, int *data, int length) {
     int successCount = 0;
 
     for (int i = 0; i < length; ++i) {
@@ -235,7 +218,7 @@ int readBufferMultipleNoMutex(CircularBuffer *cBuffer, char *data, int length) {
     return successCount;
 }
 
-int writeBufferMultipleNoMutex(CircularBuffer *cBuffer, char *data, int length) {
+int writeBufferIntMultipleNoMutex(CircularBuffer_Int *cBuffer, int *data, int length) {
     int successCount = 0;
 
     for (int i = 0; i < length; ++i) {
@@ -252,7 +235,7 @@ int writeBufferMultipleNoMutex(CircularBuffer *cBuffer, char *data, int length) 
     return successCount;
 }
 
-int readBufferMultipleAndClearNoMutex(CircularBuffer *cBuffer, char *data, int length) {
+int readBufferIntMultipleAndClearNoMutex(CircularBuffer_Int *cBuffer, int *data, int length) {
     int successCount = 0;
 
     for (int i = 0; i < length; ++i) {
@@ -272,7 +255,7 @@ int readBufferMultipleAndClearNoMutex(CircularBuffer *cBuffer, char *data, int l
     return successCount;
 }
 
-int getRemainingCountNoMutex(CircularBuffer *cBuffer) {
+int getIntRemainingCountNoMutex(CircularBuffer_Int *cBuffer) {
     int count;
 
     count = cBuffer->tail - cBuffer->head;
@@ -284,7 +267,7 @@ int getRemainingCountNoMutex(CircularBuffer *cBuffer) {
     return count;
 }
 
-int getWritableCapacityNoMutex(CircularBuffer *cBuffer) {
+int getIntWritableCapacityNoMutex(CircularBuffer_Int *cBuffer) {
     int capacity;
     //? 考虑head 变化，需要带锁访问
     if (cBuffer->head <= cBuffer->tail) {
@@ -296,6 +279,6 @@ int getWritableCapacityNoMutex(CircularBuffer *cBuffer) {
     return capacity;
 }
 
-void clearBufferNoMutex(CircularBuffer *cBuffer) {
+void clearIntBufferNoMutex(CircularBuffer_Int *cBuffer) {
     cBuffer->head = cBuffer->tail;
 }
